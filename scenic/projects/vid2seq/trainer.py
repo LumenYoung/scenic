@@ -1100,6 +1100,63 @@ def train_and_eval(
   return train_state, train_summary, eval_summary
 
 
+def get_eval_train_state(
+    rng: np.ndarray, config: ml_collections.ConfigDict, *, workdir: str,
+    writer: Any, model_cls, dataset_dict
+    ) -> train_utils.TrainState:
+  """Output the 
+
+  Args:
+    rng: JAX prng key.
+    config: The configuration of the experiment.
+    workdir: Where to checkpoint and write the summaries.
+    writer: Summary writer object.
+    model_cls: The model class used to instantiate the model.
+    dataset_dict: The dataset for training and evaluation.
+
+  Returns:
+    A tuple with:
+      * the state that has the state of training (including current
+        global_step, model_state, rng, and the optimizer)
+  """
+
+  datasets_metadata = {name: ds.meta_data for name, ds in dataset_dict.items()}
+  all_datasets = []
+  all_datasets_num_train_examples = []
+  for name, metadata in datasets_metadata.items():
+    all_datasets.append(name)
+    all_datasets_num_train_examples.append(
+        metadata.get('num_train_examples', 0))
+  dataset = dataset_dict[all_datasets[0]]
+
+  model = model_cls(config, dataset.meta_data)
+  _, eval_step_pmapped = pmapped_steps(model, config)
+
+  train_state, start_step = init_state(model, dataset, config, workdir, rng)  # pytype: disable=wrong-arg-types  # jax-ndarray
+  assert start_step == 0
+  train_state = jax_utils.replicate(train_state)
+  logging.info('Number of processes is %s', jax.process_count())
+
+  del rng  # So that we don't mistakenly re-use it.
+
+  # Build a tokenizer for the evaluation
+  tokenizer = get_tokenizer(config)
+
+  hooks = []
+  if config.get('xprof', True) and jax.process_index() == 0:
+    hooks.append(periodic_actions.Profile(num_profile_steps=5, logdir=workdir))
+
+  # Evaluate every `log_eval_steps`.
+  for ds_name in dataset.valid_iter:
+    # Compute the number of evaluation steps per dataset.
+    num_eval_examples = dataset.meta_data['num_eval_examples'][ds_name]
+    total_eval_steps = int(
+        np.ceil(num_eval_examples / (config.get('eval_batch_size'))))
+    steps_per_eval = config.get('steps_per_eval', total_eval_steps)
+
+  return train_state
+
+
 def eval_only(
     rng: np.ndarray, config: ml_collections.ConfigDict, *, workdir: str,
     writer: Any, model_cls, dataset_dict
