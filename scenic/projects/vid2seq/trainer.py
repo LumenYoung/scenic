@@ -376,6 +376,32 @@ def pmapped_steps(model, config):
   )
   return train_step_pmapped, eval_step_pmapped
 
+def vmapped_steps(model, config):
+  """Returns the vmapped train and eval steps."""
+  # Learning rate scheduler.
+  learning_rate_fn = lr_schedules.get_learning_rate_fn(config)
+  train_step_pmapped = jax.vmap(
+      functools.partial(
+          train_step,
+          flax_model=model.flax_model,
+          learning_rate_fn=learning_rate_fn,
+          loss_fn=model.loss_function,
+          metrics_fn=model.get_metrics_fn('train'),
+          config=config,
+          debug=config.debug_train),
+      axis_name='batch',
+      # We can donate both buffers of train_state and train_batch.
+  )
+  eval_step_pmapped = jax.vmap(
+      functools.partial(
+          eval_step,
+          model=model,
+          metrics_fn=model.get_metrics_fn('validation'),
+          config=config,
+          debug=config.debug_eval),
+      axis_name='batch',
+  )
+  return train_step_pmapped, eval_step_pmapped
 
 def load_decoder_params(train_state: train_utils.TrainState,
                         config: ml_collections.ConfigDict):
