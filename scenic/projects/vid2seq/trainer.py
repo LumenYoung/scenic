@@ -47,7 +47,7 @@ LossFn = Callable[[jnp.ndarray, Batch], float]
 
 def predict_only(
     rng: np.ndarray, config: ml_collections.ConfigDict, *, workdir: str,
-    writer: Any, model_cls, dataset_dict
+     model_cls, dataset_dict
 ) -> Tuple[train_utils.TrainState, Dict[str, Any], Dict[str, Any]]:
   """Evaluate the model.
 
