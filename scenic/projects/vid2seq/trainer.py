@@ -45,6 +45,282 @@ MetricFn = Callable[[jnp.ndarray, Batch], Dict[str, Tuple[float, int]]]
 LossFn = Callable[[jnp.ndarray, Batch], float]
 
 
+def predict_only(
+    rng: np.ndarray, config: ml_collections.ConfigDict, *, workdir: str,
+    writer: Any, model_cls, dataset_dict
+) -> Tuple[train_utils.TrainState, Dict[str, Any], Dict[str, Any]]:
+  """Evaluate the model.
+
+  Args:
+    rng: JAX prng key.
+    config: The configuration of the experiment.
+    workdir: Where to checkpoint and write the summaries.
+    writer: Summary writer object.
+    model_cls: The model class used to instantiate the model.
+    dataset_dict: The dataset for training and evaluation.
+
+  Returns:
+    TODO
+  """
+
+  datasets_metadata = {name: ds.meta_data for name, ds in dataset_dict.items()}
+  all_datasets = []
+  all_datasets_num_train_examples = []
+  for name, metadata in datasets_metadata.items():
+    all_datasets.append(name)
+    all_datasets_num_train_examples.append(
+        metadata.get('num_train_examples', 0))
+  dataset = dataset_dict[all_datasets[0]]
+
+  model = model_cls(config, dataset.meta_data)
+  _, eval_step_pmapped = pmapped_steps(model, config)
+
+  train_state, start_step = init_state(model, dataset, config, workdir, rng)  # pytype: disable=wrong-arg-types  # jax-ndarray
+  assert start_step == 0
+  train_state = jax_utils.replicate(train_state)
+  logging.info('Number of processes is %s', jax.process_count())
+
+  del rng  # So that we don't mistakenly re-use it.
+
+  # Build a tokenizer for the evaluation
+  tokenizer = get_tokenizer(config)
+
+  hooks = []
+  if config.get('xprof', True) and jax.process_index() == 0:
+    hooks.append(periodic_actions.Profile(num_profile_steps=5, logdir=workdir))
+
+  # Evaluate every `log_eval_steps`.
+  for ds_name in dataset.valid_iter:
+    # Compute the number of evaluation steps per dataset.
+    num_eval_examples = dataset.meta_data['num_eval_examples'][ds_name]
+    total_eval_steps = int(
+        np.ceil(num_eval_examples / (config.get('eval_batch_size'))))
+    steps_per_eval = config.get('steps_per_eval', total_eval_steps)
+
+    predictions = decode_predictions(
+        train_state=train_state,
+        iterator=dataset.valid_iter[ds_name],
+        eval_step_fn=eval_step_pmapped,
+        eval_steps=steps_per_eval,
+        tokenizer=tokenizer,
+        num_bins=config.dataset_configs.num_bins,
+        vocabulary_size=config.dataset_configs.vocabulary_size,
+        abs_time_token=config.dataset_configs.abs_time_token,
+        time_format=config.dataset_configs.time_format,
+        tmp_only=config.dataset_configs.tmp_only,
+        order=config.dataset_configs.order,
+        t=1000000.,  # 1 FPS
+        )
+
+  # Return the train and eval summary after last step.
+  return predictions
+
+def decode_predictions(
+    *,
+    train_state: train_utils.TrainState,
+    iterator,
+    eval_step_fn,
+    eval_steps,
+    tokenizer,
+    vocabulary_size,
+    num_bins,
+    abs_time_token,
+    time_format,
+    tmp_only,
+    order,
+    t,
+):
+    """Decode the model predictions."""
+    # Sync model state across replicas.
+    train_state = train_utils.sync_model_state_across_replicas(train_state)
+    eval_packs = {}
+    logging.info("Total number of eval steps is %s", eval_steps)
+    # This ensures that all eval batches are covered.
+    eval_steps = int(eval_steps * 1.3)
+    keys = []
+    decoded_predictions = []
+
+    for step in range(eval_steps):
+        with jax.profiler.StepTraceAnnotation("eval", step_num=step):
+            eval_batch = next(iterator)
+
+            # Put the string inputs to a separate lists and delete them before passing
+            # to the pmapped function.
+            eval_pack = {
+                "gts": dvc_eval.convert_strings_to_uint8_arrays(
+                    eval_batch["caption_strings"], MAX_CAPTION_STR_LEN
+                ),
+                "key": dvc_eval.convert_strings_to_uint8_arrays(
+                    eval_batch["videoid"], MAX_KEY_STR_LEN
+                ),
+                "batch_mask": eval_batch["batch_mask"],
+                "duration": eval_batch["duration"],
+                "gts_start": eval_batch["timestamp_start"],
+                "gts_end": eval_batch["timestamp_end"],
+                "split": eval_batch["split"]
+                if "split" in eval_batch
+                else np.ones_like(eval_batch["timestamp_start"]),
+            }
+            to_del = [
+                "caption_strings",
+                "key",
+                "videoid",
+                "timestamp_start",
+                "timestamp_end",
+                "split",
+            ]  # 'duration',
+            for x in to_del:
+                if x in eval_batch:
+                    del eval_batch[x]
+
+            eval_metrics, preds = eval_step_fn(train_state, eval_batch)
+
+            # Do not gather at this stage to run dvc_eval before gathering
+            eval_pack["pred"] = preds
+            eval_pack = jax.tree_map(
+                lambda x: x.reshape((np.prod(x.shape[:2]),) + x.shape[2:]), eval_pack
+            )
+            logging.info(
+                "eval_pack %d shapes: %s",
+                step,
+                jax.tree_map(lambda x: x.shape, eval_pack),
+            )
+
+            gts_timestamps = [
+                [[s, e] for s, e in zip(ls, le)]
+                for ls, le in zip(eval_pack["gts_start"], eval_pack["gts_end"])
+            ]
+            gts_timestamps = [
+                [x for x in y if x[0] != -1] for y in gts_timestamps
+            ]  # unpad GT
+
+            gts = [
+                [remove_nonascii(dvc_eval.convert_uint8_array_to_string(x)) for x in y]
+                for y in eval_pack["gts"]
+            ]
+            gts = [[x for x in y if x] for y in gts]  # unpad GT
+
+            splits = [
+                [k for m, k in enumerate(eval_pack["split"][i]) if m < len(gts[i])]
+                for i in range(len(gts))
+            ]
+
+            for i, valid in enumerate(eval_pack["batch_mask"]):
+                if valid:
+                    key = dvc_eval.convert_uint8_array_to_string(eval_pack["key"][i])
+                    if key in eval_packs:  # redundant video
+                        continue
+                    keys.append(key)
+
+                    pred, pred_timestamps = [], []
+                    # get indexes in the predicted seq that delimit the pred segments
+                    indexes = [
+                        j
+                        for j in range(len(eval_pack["pred"][i]) - 1)
+                        if eval_pack["pred"][i][j] >= vocabulary_size
+                        and eval_pack["pred"][i][j + 1] >= vocabulary_size
+                    ]  # pylint: disable=g-complex-comprehension
+
+                    last_processed = -2
+
+                    # iterate over predicted segments and decode them
+                    for j in range(len(indexes)):
+                        if indexes[j] == last_processed + 1:  # 3 timestamps != 2 events
+                            continue
+
+                        # get predicted tokens and transform to string
+                        if order == "ld":
+                            start_idx = indexes[j] + 2
+                            end_idx = (
+                                indexes[j + 1]
+                                if j < len(indexes) - 1
+                                else len(eval_pack["pred"][i])
+                            )
+                        else:
+                            start_idx = indexes[j - 1] + 2 if j > 0 else 0
+                            end_idx = indexes[j]
+                        pred_seq = [
+                            int(eval_pack["pred"][i][k])
+                            for k in range(start_idx, end_idx)
+                        ]
+                        pred_text = decode_tokens(pred_seq, tokenizer, vocabulary_size)
+                        if (not pred_text) and (not tmp_only):  # remove empty string
+                            continue
+
+                        # get start and end
+                        if not abs_time_token:
+                            max_offset = num_bins - 1
+                            pred_time = [
+                                (
+                                    int(eval_pack["pred"][i][indexes[j]])
+                                    - vocabulary_size
+                                )
+                                * eval_pack["duration"][i]
+                                / max_offset,
+                                (
+                                    int(eval_pack["pred"][i][indexes[j] + 1])
+                                    - vocabulary_size
+                                )
+                                * eval_pack["duration"][i]
+                                / max_offset,
+                            ]
+                        else:
+                            pred_time = [
+                                (
+                                    int(eval_pack["pred"][i][indexes[j]])
+                                    - vocabulary_size
+                                )
+                                * t,
+                                (
+                                    int(eval_pack["pred"][i][indexes[j] + 1])
+                                    - vocabulary_size
+                                )
+                                * t,
+                            ]
+                            pred_time = decode_time(
+                                pred_time, eval_pack["duration"][i], time_format
+                            )
+                        if pred_time[1] <= pred_time[0]:  # remove end < start
+                            continue
+                        last_processed = indexes[j]
+
+                        pred.append(pred_text)
+                        pred_timestamps.append(pred_time)
+
+                    eval_packs[key] = {
+                        "pred": pred,
+                        "gts": gts[i],
+                        "pred_timestamps": pred_timestamps,
+                        "gts_timestamps": gts_timestamps[i],  # unpad GT timestamp
+                        "split": splits[i],
+                    }
+
+            to_del = [
+                "batch_mask",
+                "gts",
+                "pred",
+                "duration",
+                "gts_start",
+                "gts_end",
+                "key",
+                "split",
+            ]
+            for x in to_del:
+                del eval_pack[x]
+            logging.info("Finished %d decoding", step)
+
+            decoded_predictions.append(
+                {
+                    "key": key,
+                    "pred": pred,
+                    "pred_timestamps": pred_timestamps,
+                }
+            )
+
+            # ... (Same code as before until the end of the for loop)
+
+    return decoded_predictions
+
 def remove_nonascii(text):
   return ''.join([i if ord(i) < 128 else ' ' for i in text])
 
