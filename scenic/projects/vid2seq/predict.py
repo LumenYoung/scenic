@@ -12,7 +12,7 @@ from scenic import app
 from scenic.projects.vid2seq import models
 from scenic.projects.vid2seq import trainer
 
-from scenic.projects.vid2seq.config.eval_configuration import get_config
+from scenic.projects.vid2seq.configs.eval_configuration import get_config
 
 
 def make_predictions():
