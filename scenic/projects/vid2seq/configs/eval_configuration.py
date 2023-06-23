@@ -11,7 +11,7 @@ def get_config(runlocal=''):
   config = ml_collections.ConfigDict()
   config.token_loss_coef = 1.
   config.runlocal = runlocal
-  config.experiment_name = 'activitynet'
+  config.experiment_name = 'pro7 test 1'
 
   config.count_flops = False  # if runlocal else ml_collections.ConfigDict({'count_flops': True})
 
@@ -78,7 +78,7 @@ def get_config(runlocal=''):
   config.dataset_configs.vocabulary_size = 32128
   config.dataset_configs.max_events = 15 if runlocal else 30
   config.dataset_configs.asr_notime = False
-  config.datasets = {'activitynet': config.dataset_configs}
+  config.datasets = {'pro7': config.dataset_configs}
 
   # Decoding
   config.decoding = ml_collections.ConfigDict()
@@ -124,7 +124,7 @@ def get_config(runlocal=''):
   config.init_from = ml_collections.ConfigDict()
   # Replace with your checkpoint pretrained on YT-temporal-1bn, assuming it has
   # been trained for 200K iterations
-  config.init_from.checkpoint_path = ''
+  config.init_from.checkpoint_path = '/home/ec2-user/Documents/anet-captions'
   # config.init_from.model_config = ''
   config.init_from.step = 200000
 
