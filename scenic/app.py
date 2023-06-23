@@ -59,7 +59,7 @@ flags.DEFINE_string('dataset_service_address', None,
                     'Address of the tf.data service')
 flags.mark_flags_as_required(['config', 'workdir'])
 
-flax.config.update('flax_use_orbax_checkpointing', False)
+# flax.config.update('flax_use_orbax_checkpointing', False)
 
 
 def run(main):
