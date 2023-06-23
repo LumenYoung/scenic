@@ -48,8 +48,8 @@ def get_config(runlocal=''):
   # List of modalities to load, supports `features` only for now.
   # Note that it only specifies which modalities to load, not which to use,
   # which is controlled by config.model.modality_fusion
-  # config.dataset_configs.modalities = ('features', 'text')
-  config.dataset_configs.modalities = ('features' )
+  config.dataset_configs.modalities = ('features', 'text')
+  # config.dataset_configs.modalities = ('features' )
   config.dataset_configs.features_dim = 768
   config.dataset_configs.return_as_dict = True
   num_frames = ml_collections.config_dict.FieldReference(100)
@@ -67,6 +67,7 @@ def get_config(runlocal=''):
   config.dataset_configs.max_num_input_words = 1000
   config.dataset_configs.tokenizer = ml_collections.ConfigDict()
   config.dataset_configs.tokenizer.tokenizer_type = 'sentence_piece'
+  config.dataset_configs.tokenizer.tokenizer_model = "/home/ec2-user/Documents/vocabs_mc4.250000.100extra_sentencepiece.model"
   config.dataset_configs.caption_string = 'caption/string'
   config.dataset_configs.train_caption_string = 'caption/string'
   config.dataset_configs.input_timestamp_name = 'video/timestamps'
