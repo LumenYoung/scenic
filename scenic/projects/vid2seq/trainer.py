@@ -28,7 +28,7 @@ from scenic.projects.t5 import tokenizer as t5_tokenizer
 from scenic.projects.vid2seq import load_utils
 from scenic.projects.vid2seq import models
 from scenic.projects.vid2seq import train_utils as vid2seq_train_utils
-# from scenic.projects.vid2seq import dvc_eval
+from scenic.projects.vid2seq import dvc_eval
 from scenic.train_lib_deprecated import lr_schedules
 from scenic.train_lib_deprecated import optimizers
 from scenic.train_lib_deprecated import pretrain_utils
@@ -910,300 +910,300 @@ class SummaryBuilder:
     return summary
 
 
-def eval_and_log_summary(
-    *,
-    train_state: train_utils.TrainState,
-    writer: metric_writers.MetricWriter,
-    iterator,
-    eval_step_fn,
-    eval_steps,
-    train_iteration,
-    tokenizer,
-    dataset_name,
-    num_bins,
-    vocabulary_size,
-    abs_time_token,
-    time_format,
-    tmp_only,
-    runlocal,  # pylint: disable=unused-argument
-    order,
-    workdir,
-    soda,
-    eval_batch_size,  # pylint: disable=unused-argument
-    max_events,
-    para,
-    t,
-    is_split
-    ):
-  """Eval the model and write the summary."""
-  # Sync model state across replicas.
-  train_state = train_utils.sync_model_state_across_replicas(train_state)
-  eval_packs = {}
-  logging.info('Total number of eval steps is %s', eval_steps)
-  # This ensures that all eval batchs are covered.
-  eval_steps = int(eval_steps * 1.3)
-  keys = []
-  for step in range(eval_steps):
-    with jax.profiler.StepTraceAnnotation('eval', step_num=step):
-      eval_batch = next(iterator)
+# def eval_and_log_summary(
+#     *,
+#     train_state: train_utils.TrainState,
+#     writer: metric_writers.MetricWriter,
+#     iterator,
+#     eval_step_fn,
+#     eval_steps,
+#     train_iteration,
+#     tokenizer,
+#     dataset_name,
+#     num_bins,
+#     vocabulary_size,
+#     abs_time_token,
+#     time_format,
+#     tmp_only,
+#     runlocal,  # pylint: disable=unused-argument
+#     order,
+#     workdir,
+#     soda,
+#     eval_batch_size,  # pylint: disable=unused-argument
+#     max_events,
+#     para,
+#     t,
+#     is_split
+#     ):
+#   """Eval the model and write the summary."""
+#   # Sync model state across replicas.
+#   train_state = train_utils.sync_model_state_across_replicas(train_state)
+#   eval_packs = {}
+#   logging.info('Total number of eval steps is %s', eval_steps)
+#   # This ensures that all eval batchs are covered.
+#   eval_steps = int(eval_steps * 1.3)
+#   keys = []
+#   for step in range(eval_steps):
+#     with jax.profiler.StepTraceAnnotation('eval', step_num=step):
+#       eval_batch = next(iterator)
 
-      # Put the string inputs to a separate lists and delete them before passing
-      # to the pmapped function.
-      eval_pack = {
-          'gts':
-              dvc_eval.convert_strings_to_uint8_arrays(
-                  eval_batch['caption_strings'], MAX_CAPTION_STR_LEN),
-          'key':
-              dvc_eval.convert_strings_to_uint8_arrays(
-                  eval_batch['videoid'], MAX_KEY_STR_LEN),
-          'batch_mask':
-              eval_batch['batch_mask'],
-          'duration':
-              eval_batch['duration'],
-          'gts_start':
-              eval_batch['timestamp_start'],
-          'gts_end':
-              eval_batch['timestamp_end'],
-          'split':
-              eval_batch['split'] if 'split' in eval_batch else
-              np.ones_like(eval_batch['timestamp_start']),
-      }
-      to_del = ['caption_strings', 'key', 'videoid', 'timestamp_start',
-                'timestamp_end', 'split']  # 'duration',
-      for x in to_del:
-        if x in eval_batch:
-          del eval_batch[x]
+#       # Put the string inputs to a separate lists and delete them before passing
+#       # to the pmapped function.
+#       eval_pack = {
+#           'gts':
+#               dvc_eval.convert_strings_to_uint8_arrays(
+#                   eval_batch['caption_strings'], MAX_CAPTION_STR_LEN),
+#           'key':
+#               dvc_eval.convert_strings_to_uint8_arrays(
+#                   eval_batch['videoid'], MAX_KEY_STR_LEN),
+#           'batch_mask':
+#               eval_batch['batch_mask'],
+#           'duration':
+#               eval_batch['duration'],
+#           'gts_start':
+#               eval_batch['timestamp_start'],
+#           'gts_end':
+#               eval_batch['timestamp_end'],
+#           'split':
+#               eval_batch['split'] if 'split' in eval_batch else
+#               np.ones_like(eval_batch['timestamp_start']),
+#       }
+#       to_del = ['caption_strings', 'key', 'videoid', 'timestamp_start',
+#                 'timestamp_end', 'split']  # 'duration',
+#       for x in to_del:
+#         if x in eval_batch:
+#           del eval_batch[x]
 
-      eval_metrics, preds = eval_step_fn(train_state, eval_batch)
+#       eval_metrics, preds = eval_step_fn(train_state, eval_batch)
 
-      # Do not gather at this stage to run dvc_eval before gathering
-      eval_pack['pred'] = preds
-      eval_pack = jax.tree_map(
-          lambda x: x.reshape((np.prod(x.shape[:2]),) + x.shape[2:]), eval_pack)
-      logging.info('eval_pack %d shapes: %s',
-                   step, jax.tree_map(lambda x: x.shape, eval_pack))
+#       # Do not gather at this stage to run dvc_eval before gathering
+#       eval_pack['pred'] = preds
+#       eval_pack = jax.tree_map(
+#           lambda x: x.reshape((np.prod(x.shape[:2]),) + x.shape[2:]), eval_pack)
+#       logging.info('eval_pack %d shapes: %s',
+#                    step, jax.tree_map(lambda x: x.shape, eval_pack))
 
-      gts_timestamps = [[
-          [s, e] for s, e in zip(ls, le)
-      ] for ls, le in zip(eval_pack['gts_start'], eval_pack['gts_end'])]
-      gts_timestamps = [[x for x in y if x[0] != -1] for y in gts_timestamps
-                       ]  # unpad GT
+#       gts_timestamps = [[
+#           [s, e] for s, e in zip(ls, le)
+#       ] for ls, le in zip(eval_pack['gts_start'], eval_pack['gts_end'])]
+#       gts_timestamps = [[x for x in y if x[0] != -1] for y in gts_timestamps
+#                        ]  # unpad GT
 
-      gts = [[remove_nonascii(dvc_eval.convert_uint8_array_to_string(x))
-              for x in y]
-             for y in eval_pack['gts']]
-      gts = [[x for x in y if x] for y in gts]  # unpad GT
+#       gts = [[remove_nonascii(dvc_eval.convert_uint8_array_to_string(x))
+#               for x in y]
+#              for y in eval_pack['gts']]
+#       gts = [[x for x in y if x] for y in gts]  # unpad GT
 
-      splits = [[k for m, k in enumerate(eval_pack['split'][i])
-                 if m < len(gts[i])] for i in range(len(gts))]
+#       splits = [[k for m, k in enumerate(eval_pack['split'][i])
+#                  if m < len(gts[i])] for i in range(len(gts))]
 
-      for i, valid in enumerate(eval_pack['batch_mask']):
-        if valid:
-          key = dvc_eval.convert_uint8_array_to_string(eval_pack['key'][i])
-          if key in eval_packs:  # redundant video
-            continue
-          keys.append(key)
+#       for i, valid in enumerate(eval_pack['batch_mask']):
+#         if valid:
+#           key = dvc_eval.convert_uint8_array_to_string(eval_pack['key'][i])
+#           if key in eval_packs:  # redundant video
+#             continue
+#           keys.append(key)
 
-          pred, pred_timestamps = [], []
-          # get indexes in the predicted seq that delimit the pred segments
-          indexes = [
-              j for j in range(len(eval_pack['pred'][i]) - 1)
-              if eval_pack['pred'][i][j] >= vocabulary_size and
-              eval_pack['pred'][i][j + 1] >= vocabulary_size
-          ]  # pylint: disable=g-complex-comprehension
+#           pred, pred_timestamps = [], []
+#           # get indexes in the predicted seq that delimit the pred segments
+#           indexes = [
+#               j for j in range(len(eval_pack['pred'][i]) - 1)
+#               if eval_pack['pred'][i][j] >= vocabulary_size and
+#               eval_pack['pred'][i][j + 1] >= vocabulary_size
+#           ]  # pylint: disable=g-complex-comprehension
 
-          last_processed = -2
+#           last_processed = -2
 
-          # iterate over predicted segments and decode them
-          for j in range(len(indexes)):
-            if indexes[j] == last_processed + 1:  # 3 timestamps != 2 events
-              continue
+#           # iterate over predicted segments and decode them
+#           for j in range(len(indexes)):
+#             if indexes[j] == last_processed + 1:  # 3 timestamps != 2 events
+#               continue
 
-            # get predicted tokens and transform to string
-            if order == 'ld':
-              start_idx = indexes[j] + 2
-              end_idx = indexes[j + 1] if j < len(indexes) - 1 else len(
-                  eval_pack['pred'][i])
-            else:
-              start_idx = indexes[j - 1] + 2 if j > 0 else 0
-              end_idx = indexes[j]
-            pred_seq = [int(eval_pack['pred'][i][k])
-                        for k in range(start_idx, end_idx)]
-            pred_text = decode_tokens(pred_seq, tokenizer, vocabulary_size)
-            if (not pred_text) and (not tmp_only):  # remove empty string
-              continue
+#             # get predicted tokens and transform to string
+#             if order == 'ld':
+#               start_idx = indexes[j] + 2
+#               end_idx = indexes[j + 1] if j < len(indexes) - 1 else len(
+#                   eval_pack['pred'][i])
+#             else:
+#               start_idx = indexes[j - 1] + 2 if j > 0 else 0
+#               end_idx = indexes[j]
+#             pred_seq = [int(eval_pack['pred'][i][k])
+#                         for k in range(start_idx, end_idx)]
+#             pred_text = decode_tokens(pred_seq, tokenizer, vocabulary_size)
+#             if (not pred_text) and (not tmp_only):  # remove empty string
+#               continue
 
-            # get start and end
-            if not abs_time_token:
-              max_offset = num_bins - 1
-              pred_time = [
-                  (int(eval_pack['pred'][i][indexes[j]])
-                   - vocabulary_size) *
-                  eval_pack['duration'][i] / max_offset,
-                  (int(eval_pack['pred'][i][indexes[j] + 1]) -
-                   vocabulary_size) *
-                  eval_pack['duration'][i] / max_offset
-                  ]
-            else:
-              pred_time = [
-                  (int(eval_pack['pred'][i][indexes[j]])
-                   - vocabulary_size) * t,
-                  (int(eval_pack['pred'][i][indexes[j] + 1]) -
-                   vocabulary_size) * t
-                  ]
-              pred_time = decode_time(pred_time, eval_pack['duration'][i],
-                                      time_format)
-            if pred_time[1] <= pred_time[0]:  # remove end < start
-              continue
-            last_processed = indexes[j]
+#             # get start and end
+#             if not abs_time_token:
+#               max_offset = num_bins - 1
+#               pred_time = [
+#                   (int(eval_pack['pred'][i][indexes[j]])
+#                    - vocabulary_size) *
+#                   eval_pack['duration'][i] / max_offset,
+#                   (int(eval_pack['pred'][i][indexes[j] + 1]) -
+#                    vocabulary_size) *
+#                   eval_pack['duration'][i] / max_offset
+#                   ]
+#             else:
+#               pred_time = [
+#                   (int(eval_pack['pred'][i][indexes[j]])
+#                    - vocabulary_size) * t,
+#                   (int(eval_pack['pred'][i][indexes[j] + 1]) -
+#                    vocabulary_size) * t
+#                   ]
+#               pred_time = decode_time(pred_time, eval_pack['duration'][i],
+#                                       time_format)
+#             if pred_time[1] <= pred_time[0]:  # remove end < start
+#               continue
+#             last_processed = indexes[j]
 
-            pred.append(pred_text)
-            pred_timestamps.append(pred_time)
+#             pred.append(pred_text)
+#             pred_timestamps.append(pred_time)
 
-          eval_packs[key] = {
-              'pred': pred,
-              'gts': gts[i],
-              'pred_timestamps': pred_timestamps,
-              'gts_timestamps': gts_timestamps[i],  # unpad GT timestamp
-              'split': splits[i],
-          }
+#           eval_packs[key] = {
+#               'pred': pred,
+#               'gts': gts[i],
+#               'pred_timestamps': pred_timestamps,
+#               'gts_timestamps': gts_timestamps[i],  # unpad GT timestamp
+#               'split': splits[i],
+#           }
 
-      to_del = [
-          'batch_mask', 'gts', 'pred', 'duration', 'gts_start', 'gts_end',
-          'key', 'split'
-      ]
-      for x in to_del:
-        del eval_pack[x]
-      logging.info('Finished %d decoding', step)
+#       to_del = [
+#           'batch_mask', 'gts', 'pred', 'duration', 'gts_start', 'gts_end',
+#           'key', 'split'
+#       ]
+#       for x in to_del:
+#         del eval_pack[x]
+#       logging.info('Finished %d decoding', step)
 
-  predicted_captions = [eval_packs[x]['pred'] for x in keys]
-  predicted_segments = [
-      np.array(eval_packs[x]['pred_timestamps']) for x in keys
-  ]
-  gt_captions = [eval_packs[x]['gts'] for x in keys]
-  gt_segments = [np.array(eval_packs[x]['gts_timestamps']) for x in keys]
-  splits = [eval_packs[x]['split'] for x in keys]
+#   predicted_captions = [eval_packs[x]['pred'] for x in keys]
+#   predicted_segments = [
+#       np.array(eval_packs[x]['pred_timestamps']) for x in keys
+#   ]
+#   gt_captions = [eval_packs[x]['gts'] for x in keys]
+#   gt_segments = [np.array(eval_packs[x]['gts_timestamps']) for x in keys]
+#   splits = [eval_packs[x]['split'] for x in keys]
 
-  if para:
-    logging.info('Gathering predictions')
-    # Fill fixed shape arrays
-    pad_len = eval_steps * (eval_batch_size // jax.process_count())
-    res = {
-        'pred':
-            np.zeros([pad_len,
-                      MAX_CAPTION_STR_LEN * max_events]).astype(np.uint8),
-        'gt':
-            np.zeros([pad_len, 2,
-                      MAX_CAPTION_STR_LEN * max_events]).astype(np.uint8),
-        'mask':
-            np.zeros([pad_len])
-    }
-    res['mask'][:len(splits)] = 1
-    for i in range(len(splits)):
-      if predicted_captions[i]:
-        pred = ' '.join(predicted_captions[i])
-        pred = dvc_eval.convert_strings_to_uint8_arrays(
-            np.array([pred]), MAX_CAPTION_STR_LEN * max_events)
-        res['pred'][i] = pred[0]
-      split = splits[i]
-      unique_splits = set(split)
-      for j, s in enumerate(unique_splits):
-        indexes = np.where(split == s)[0]
-        gt = ' '.join([gt_captions[i][idx] for idx in indexes])
-        gt = dvc_eval.convert_strings_to_uint8_arrays(
-            np.array([gt]), MAX_CAPTION_STR_LEN * max_events)
-        res['gt'][i][j] = gt[0]
-    ndevh = jax.device_count() // jax.process_count()
-    for x in res:
-      res[x] = res[x].reshape((ndevh, res[x].shape[0] // ndevh) +
-                              res[x].shape[1:])
+#   if para:
+#     logging.info('Gathering predictions')
+#     # Fill fixed shape arrays
+#     pad_len = eval_steps * (eval_batch_size // jax.process_count())
+#     res = {
+#         'pred':
+#             np.zeros([pad_len,
+#                       MAX_CAPTION_STR_LEN * max_events]).astype(np.uint8),
+#         'gt':
+#             np.zeros([pad_len, 2,
+#                       MAX_CAPTION_STR_LEN * max_events]).astype(np.uint8),
+#         'mask':
+#             np.zeros([pad_len])
+#     }
+#     res['mask'][:len(splits)] = 1
+#     for i in range(len(splits)):
+#       if predicted_captions[i]:
+#         pred = ' '.join(predicted_captions[i])
+#         pred = dvc_eval.convert_strings_to_uint8_arrays(
+#             np.array([pred]), MAX_CAPTION_STR_LEN * max_events)
+#         res['pred'][i] = pred[0]
+#       split = splits[i]
+#       unique_splits = set(split)
+#       for j, s in enumerate(unique_splits):
+#         indexes = np.where(split == s)[0]
+#         gt = ' '.join([gt_captions[i][idx] for idx in indexes])
+#         gt = dvc_eval.convert_strings_to_uint8_arrays(
+#             np.array([gt]), MAX_CAPTION_STR_LEN * max_events)
+#         res['gt'][i][j] = gt[0]
+#     ndevh = jax.device_count() // jax.process_count()
+#     for x in res:
+#       res[x] = res[x].reshape((ndevh, res[x].shape[0] // ndevh) +
+#                               res[x].shape[1:])
 
-    # Gather and filter by mask
-    res = train_utils.unreplicate_and_get(
-        jax.pmap(lambda x: jax.lax.all_gather(x, 'batch'), 'batch')(res))
-    res = jax.tree_map(
-        lambda x: x.reshape((np.prod(x.shape[:2]),) + x.shape[2:]), res)
-    mask = res['mask'].astype(bool)
-    pred = res['pred'][mask]
-    pred = [dvc_eval.convert_uint8_array_to_string(x) for x in pred]
-    gt = res['gt'][mask]
-    gt = [[dvc_eval.convert_uint8_array_to_string(y) for y in x] for x in gt]
-    gt = [[y for y in x if y] for x in gt]  # unpad splits
+#     # Gather and filter by mask
+#     res = train_utils.unreplicate_and_get(
+#         jax.pmap(lambda x: jax.lax.all_gather(x, 'batch'), 'batch')(res))
+#     res = jax.tree_map(
+#         lambda x: x.reshape((np.prod(x.shape[:2]),) + x.shape[2:]), res)
+#     mask = res['mask'].astype(bool)
+#     pred = res['pred'][mask]
+#     pred = [dvc_eval.convert_uint8_array_to_string(x) for x in pred]
+#     gt = res['gt'][mask]
+#     gt = [[dvc_eval.convert_uint8_array_to_string(y) for y in x] for x in gt]
+#     gt = [[y for y in x if y] for x in gt]  # unpad splits
 
-    logging.info('Computing paragraph metrics...')
-    logging.info(pred[0])
-    logging.info(gt[0])
-    para_res = dvc_eval.evaluate_para(pred, gt)
-    logging.info('Done')
+#     logging.info('Computing paragraph metrics...')
+#     logging.info(pred[0])
+#     logging.info(gt[0])
+#     para_res = dvc_eval.evaluate_para(pred, gt)
+#     logging.info('Done')
 
-    return train_utils.log_eval_summary(
-        step=train_iteration,
-        eval_metrics=[train_utils.unreplicate_and_get(eval_metrics)],
-        extra_eval_summary=para_res,
-        writer=writer,
-        key_separator='/',
-        prefix=dataset_name)
-  logging.info('The size of eval_packs for %s: %d', dataset_name,
-               len(eval_packs))
-  eval_res = dvc_eval.evaluate_dense_captions(
-      predicted_segments=predicted_segments,
-      gt_segments=gt_segments,
-      predicted_captions=predicted_captions,
-      gt_captions=gt_captions,
-      splits=splits,
-      iou_thresholds=(0.3, 0.5, 0.7, 0.9),
-      soda=soda,
-      keys=keys,
-      tmponly=tmp_only)
-  logging.info('Finished per-host evaluation')
+#     return train_utils.log_eval_summary(
+#         step=train_iteration,
+#         eval_metrics=[train_utils.unreplicate_and_get(eval_metrics)],
+#         extra_eval_summary=para_res,
+#         writer=writer,
+#         key_separator='/',
+#         prefix=dataset_name)
+#   logging.info('The size of eval_packs for %s: %d', dataset_name,
+#                len(eval_packs))
+#   eval_res = dvc_eval.evaluate_dense_captions(
+#       predicted_segments=predicted_segments,
+#       gt_segments=gt_segments,
+#       predicted_captions=predicted_captions,
+#       gt_captions=gt_captions,
+#       splits=splits,
+#       iou_thresholds=(0.3, 0.5, 0.7, 0.9),
+#       soda=soda,
+#       keys=keys,
+#       tmponly=tmp_only)
+#   logging.info('Finished per-host evaluation')
 
-  # fill a fixed shape array
-  full_res = {
-      x: np.zeros([eval_steps * (eval_batch_size // jax.process_count())])
-      for x in eval_res.keys() if x != 'key'
-  }
-  full_res['mask'] = np.zeros(
-      [eval_steps * (eval_batch_size // jax.process_count())])
-  for x in eval_res:
-    if x != 'key':
-      full_res[x][:len(eval_res[x])] = np.array(eval_res[x])
-    full_res['mask'][:len(eval_res[x])] = 1
+#   # fill a fixed shape array
+#   full_res = {
+#       x: np.zeros([eval_steps * (eval_batch_size // jax.process_count())])
+#       for x in eval_res.keys() if x != 'key'
+#   }
+#   full_res['mask'] = np.zeros(
+#       [eval_steps * (eval_batch_size // jax.process_count())])
+#   for x in eval_res:
+#     if x != 'key':
+#       full_res[x][:len(eval_res[x])] = np.array(eval_res[x])
+#     full_res['mask'][:len(eval_res[x])] = 1
 
-  # gather results on all hosts
-  for x in full_res:
-    # number of devices per host
-    ndevh = jax.device_count() // jax.process_count()
-    full_res[x] = full_res[x].reshape((ndevh, full_res[x].shape[0] // ndevh))
-  full_res = train_utils.unreplicate_and_get(
-      jax.pmap(lambda x: jax.lax.all_gather(x, 'batch'), 'batch')(full_res))
-  full_res = jax.tree_map(
-      lambda x: x.reshape((np.prod(x.shape[:2]),) + x.shape[2:]), full_res)
-  logging.info(full_res[list(full_res)[0]].shape)
+#   # gather results on all hosts
+#   for x in full_res:
+#     # number of devices per host
+#     ndevh = jax.device_count() // jax.process_count()
+#     full_res[x] = full_res[x].reshape((ndevh, full_res[x].shape[0] // ndevh))
+#   full_res = train_utils.unreplicate_and_get(
+#       jax.pmap(lambda x: jax.lax.all_gather(x, 'batch'), 'batch')(full_res))
+#   full_res = jax.tree_map(
+#       lambda x: x.reshape((np.prod(x.shape[:2]),) + x.shape[2:]), full_res)
+#   logging.info(full_res[list(full_res)[0]].shape)
 
-  # compute averaged statistics
-  avg_res = {}
-  mask = full_res['mask'].astype(bool)
-  for x in full_res:
-    if x == 'SODA_c_1' or x == 'SODA_c_2':
-      mask2 = jnp.logical_and(mask, full_res[x] != -1)
-      avg_res[x] = float(np.mean(full_res[x][mask2]))
-    elif x != 'mask':
-      avg_res[x] = float(np.mean(full_res[x][mask]))
-  if is_split:
-    avg_res['SODA_c'] = (avg_res['SODA_c_2'] +
-                         avg_res['SODA_c_1']) / 2
-  else:
-    avg_res['SODA_c'] = avg_res['SODA_c_1']
-  del avg_res['SODA_c_2'], avg_res['SODA_c_1']
-  logging.info('Finished gathering eval metrics for %d samples', sum(mask))
+#   # compute averaged statistics
+#   avg_res = {}
+#   mask = full_res['mask'].astype(bool)
+#   for x in full_res:
+#     if x == 'SODA_c_1' or x == 'SODA_c_2':
+#       mask2 = jnp.logical_and(mask, full_res[x] != -1)
+#       avg_res[x] = float(np.mean(full_res[x][mask2]))
+#     elif x != 'mask':
+#       avg_res[x] = float(np.mean(full_res[x][mask]))
+#   if is_split:
+#     avg_res['SODA_c'] = (avg_res['SODA_c_2'] +
+#                          avg_res['SODA_c_1']) / 2
+#   else:
+#     avg_res['SODA_c'] = avg_res['SODA_c_1']
+#   del avg_res['SODA_c_2'], avg_res['SODA_c_1']
+#   logging.info('Finished gathering eval metrics for %d samples', sum(mask))
 
-  return train_utils.log_eval_summary(
-      step=train_iteration,
-      eval_metrics=[train_utils.unreplicate_and_get(eval_metrics)],
-      extra_eval_summary=avg_res,
-      writer=writer,
-      key_separator='/',
-      prefix=dataset_name)
+#   return train_utils.log_eval_summary(
+#       step=train_iteration,
+#       eval_metrics=[train_utils.unreplicate_and_get(eval_metrics)],
+#       extra_eval_summary=avg_res,
+#       writer=writer,
+#       key_separator='/',
+#       prefix=dataset_name)
 
 
 def get_tokenizer(
