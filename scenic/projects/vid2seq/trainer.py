@@ -28,7 +28,7 @@ from scenic.projects.t5 import tokenizer as t5_tokenizer
 from scenic.projects.vid2seq import load_utils
 from scenic.projects.vid2seq import models
 from scenic.projects.vid2seq import train_utils as vid2seq_train_utils
-from scenic.projects.vid2seq import dvc_eval
+# from scenic.projects.vid2seq import dvc_eval
 from scenic.train_lib_deprecated import lr_schedules
 from scenic.train_lib_deprecated import optimizers
 from scenic.train_lib_deprecated import pretrain_utils
